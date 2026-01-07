@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Driver Drowsiness Detection</title>
+  <style>
+    body { font-family: Arial, sans-serif; background: #eef2f7; text-align: center; }
+    h1 { color: #1f2937; }
+    video { border: 4px solid #111; border-radius: 10px; margin-top: 10px; }
+    #status { margin-top: 20px; font-size: 22px; font-weight: bold; }
+    .normal { color: green; }
+    .warning { color: red; }
+    button { padding: 10px 20px; font-size: 18px; margin-top: 15px; cursor: pointer; }
+  </style>
+</head>
+<body>
+
+<h1>🚗 Driver Drowsiness Detection System</h1>
+<video id="video" width="640" height="480" autoplay></video>
+<div id="status" class="normal">Status: Monitoring</div>
+<button id="connectBtn">Connect Arduino</button>
+
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+<script>
+  // ELEMENTS
+  const video = document.getElementById("video");
+  const statusText = document.getElementById("status");
+  const connectBtn = document.getElementById("connectBtn");
+
+  // PARAMETERS
+  const EYE_CLOSE_THRESHOLD = 3; // seconds
+  const EYE_DISTANCE_LIMIT = 0.010;
+  let eyeClosedStartTime = null;
+  let alarmActive = false;
+
+  // ARDUINO SERIAL
+  let port, writer;
+  async function connectArduino() {
+    try {
+      port = await navigator.serial.requestPort();
+      await port.open({ baudRate: 9600 });
+      writer = port.writable.getWriter();
+      console.log("Arduino Connected!");
+      connectBtn.disabled = true;
+      connectBtn.innerText = "Arduino Connected ✅";
+    } catch (err) {
+      console.log("Arduino Connection Error:", err);
+    }
+  }
+
+  connectBtn.addEventListener("click", connectArduino);
+
+  // FACE MESH SETUP
+  const faceMesh = new FaceMesh({
+    locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+  });
+
+  faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true });
+
+  faceMesh.onResults(results => {
+    if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
+      resetSystem();
+      return;
+    }
+
+    const landmarks = results.multiFaceLandmarks[0];
+    const leftEyeTop = landmarks[159].y;
+    const leftEyeBottom = landmarks[145].y;
+    const eyeDistance = Math.abs(leftEyeTop - leftEyeBottom);
+
+    if (eyeDistance < EYE_DISTANCE_LIMIT) {
+      if (!eyeClosedStartTime) eyeClosedStartTime = Date.now();
+      const closedTime = (Date.now() - eyeClosedStartTime) / 1000;
+      statusText.innerText = `Eyes Closed: ${closedTime.toFixed(1)} sec`;
+      statusText.className = "warning";
+      if (closedTime >= EYE_CLOSE_THRESHOLD) triggerAlarm();
+    } else {
+      resetSystem();
+    }
+  });
+
+  // CAMERA START
+  const camera = new Camera(video, { onFrame: async () => await faceMesh.send({ image: video }), width: 640, height: 480 });
+  camera.start();
+
+  // FUNCTIONS
+  async function triggerAlarm() {
+    if (!alarmActive) {
+      if (writer) {
+        await writer.write(new TextEncoder().encode("1\n")); // turn ON buzzer
+        console.log("Arduino → ON");
+      }
+      alarmActive = true;
+      statusText.innerText = "⚠️ DROWSINESS DETECTED!";
+      statusText.className = "warning";
+    }
+  }
+
+  async function resetSystem() {
+    eyeClosedStartTime = null;
+    if (alarmActive && writer) {
+      await writer.write(new TextEncoder().encode("0\n")); // turn OFF buzzer
+      console.log("Arduino → OFF");
+      alarmActive = false;
+    }
+    statusText.innerText = "Status: Normal";
+    statusText.className = "normal";
+  }
+</script>
+
+</body>
+</html>
