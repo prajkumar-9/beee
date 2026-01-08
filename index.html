@@ -1,112 +1,251 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>Driver Drowsiness Detection</title>
-  <style>
-    body { font-family: Arial, sans-serif; background: #eef2f7; text-align: center; }
-    h1 { color: #1f2937; }
-    video { border: 4px solid #111; border-radius: 10px; margin-top: 10px; }
-    #status { margin-top: 20px; font-size: 22px; font-weight: bold; }
-    .normal { color: green; }
-    .warning { color: red; }
-    button { padding: 10px 20px; font-size: 18px; margin-top: 15px; cursor: pointer; }
-  </style>
+<meta charset="UTF-8">
+<title>Driver Drowsiness Detection</title>
+
+<style>
+  body {
+    margin: 0;
+    min-height: 100vh;
+    font-family: "Poppins", Arial, sans-serif;
+    background: linear-gradient(135deg, #0f2027, #203a43, #2c5364);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: white;
+  }
+
+  .container {
+    width: 900px;
+    background: rgba(255,255,255,0.08);
+    backdrop-filter: blur(12px);
+    border-radius: 20px;
+    padding: 30px;
+    box-shadow: 0 20px 50px rgba(0,0,0,0.4);
+    text-align: center;
+  }
+
+  h1 {
+    margin-bottom: 6px;
+    font-size: 32px;
+  }
+
+  .subtitle {
+    opacity: 0.8;
+    margin-bottom: 20px;
+  }
+
+  video {
+    width: 640px;
+    height: 480px;
+    border-radius: 15px;
+    border: 4px solid rgba(255,255,255,0.3);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+  }
+
+  #status {
+  margin-top: 20px;
+  width: 360px;              /* FIXED WIDTH */
+  min-height: 48px;          /* FIXED HEIGHT */
+  font-size: 22px;
+  font-weight: 600;
+  padding: 10px 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;   /* CENTER TEXT */
+  border-radius: 30px;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+
+  .normal {
+    background: rgba(0,255,120,0.15);
+    color: #00ff88;
+    box-shadow: 0 0 15px rgba(0,255,120,0.5);
+  }
+
+  .warning {
+    background: rgba(255,0,60,0.15);
+    color: #ff4d4d;
+    box-shadow: 0 0 18px rgba(255,0,60,0.6);
+  }
+
+  .warning.drowsy {
+    animation: pulse 1s infinite;
+  }
+
+  @keyframes pulse {
+    0% { box-shadow: 0 0 15px rgba(255,0,60,0.5); }
+    50% { box-shadow: 0 0 35px rgba(255,0,60,1); }
+    100% { box-shadow: 0 0 15px rgba(255,0,60,0.5); }
+  }
+
+  button {
+    margin-top: 20px;
+    padding: 12px 30px;
+    font-size: 18px;
+    border: none;
+    border-radius: 30px;
+    cursor: pointer;
+    background: linear-gradient(135deg, #00c6ff, #0072ff);
+    color: white;
+    box-shadow: 0 10px 25px rgba(0,114,255,0.6);
+    transition: 0.3s;
+  }
+
+  button:hover {
+    transform: translateY(-2px);
+  }
+
+  button:disabled {
+    background: gray;
+    box-shadow: none;
+    cursor: not-allowed;
+  }
+
+  footer {
+    margin-top: 14px;
+    font-size: 14px;
+    opacity: 0.7;
+  }
+</style>
 </head>
+
 <body>
 
-<h1>🚗 Driver Drowsiness Detection System</h1>
-<video id="video" width="640" height="480" autoplay></video>
-<div id="status" class="normal">Status: Monitoring</div>
-<button id="connectBtn">Connect Arduino</button>
+<div class="container">
+  <h1>🚗 Driver Drowsiness Detection</h1>
+  <div class="subtitle">AI Vision + Arduino Buzzer Safety System</div>
+
+  <video id="video" autoplay></video>
+
+ <div id="status" class="normal">Status: Monitoring&nbsp;&nbsp;</div>
+
+  <button id="connectBtn">🔌 Connect Arduino</button>
+
+  <footer>Stay alert • Stay alive</footer>
+</div>
 
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/face_mesh.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+
 <script>
-  // ELEMENTS
-  const video = document.getElementById("video");
-  const statusText = document.getElementById("status");
-  const connectBtn = document.getElementById("connectBtn");
+/* ------------------ ELEMENTS ------------------ */
+const video = document.getElementById("video");
+const statusText = document.getElementById("status");
+const connectBtn = document.getElementById("connectBtn");
 
-  // PARAMETERS
-  const EYE_CLOSE_THRESHOLD = 3; // seconds
-  const EYE_DISTANCE_LIMIT = 0.010;
-  let eyeClosedStartTime = null;
-  let alarmActive = false;
+/* ------------------ PARAMETERS ------------------ */
+const EYE_CLOSE_THRESHOLD = 1.5;
+const EYE_DISTANCE_LIMIT = 0.010;
 
-  // ARDUINO SERIAL
-  let port, writer;
-  async function connectArduino() {
-    try {
-      port = await navigator.serial.requestPort();
-      await port.open({ baudRate: 9600 });
-      writer = port.writable.getWriter();
-      console.log("Arduino Connected!");
-      connectBtn.disabled = true;
-      connectBtn.innerText = "Arduino Connected ✅";
-    } catch (err) {
-      console.log("Arduino Connection Error:", err);
-    }
+/* ------------------ STATES ------------------ */
+let eyeClosedStartTime = null;
+let currentState = "normal"; // normal | closing | drowsy
+let lastUIUpdate = 0;
+
+/* ------------------ ARDUINO ------------------ */
+let port, writer;
+
+connectBtn.addEventListener("click", async () => {
+  try {
+    port = await navigator.serial.requestPort();
+    await port.open({ baudRate: 9600 });
+    writer = port.writable.getWriter();
+    connectBtn.innerText = "Arduino Connected ✅";
+    connectBtn.disabled = true;
+  } catch (e) {
+    console.log("Serial Error", e);
+  }
+});
+
+/* ------------------ FACE MESH ------------------ */
+const faceMesh = new FaceMesh({
+  locateFile: file =>
+    `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
+});
+
+faceMesh.setOptions({
+  maxNumFaces: 1,
+  refineLandmarks: true
+});
+
+faceMesh.onResults(results => {
+  const now = Date.now();
+
+  // Throttle UI updates (10 FPS)
+  if (now - lastUIUpdate < 100) return;
+  lastUIUpdate = now;
+
+  if (!results.multiFaceLandmarks) {
+    setNormal();
+    return;
   }
 
-  connectBtn.addEventListener("click", connectArduino);
+  const lm = results.multiFaceLandmarks[0];
+  const eyeDist = Math.abs(lm[159].y - lm[145].y);
 
-  // FACE MESH SETUP
-  const faceMesh = new FaceMesh({
-    locateFile: file => `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh/${file}`
-  });
+  if (eyeDist < EYE_DISTANCE_LIMIT) {
+    if (!eyeClosedStartTime) eyeClosedStartTime = now;
 
-  faceMesh.setOptions({ maxNumFaces: 1, refineLandmarks: true });
+    const closedTime = (now - eyeClosedStartTime) / 1000;
 
-  faceMesh.onResults(results => {
-    if (!results.multiFaceLandmarks || results.multiFaceLandmarks.length === 0) {
-      resetSystem();
-      return;
-    }
-
-    const landmarks = results.multiFaceLandmarks[0];
-    const leftEyeTop = landmarks[159].y;
-    const leftEyeBottom = landmarks[145].y;
-    const eyeDistance = Math.abs(leftEyeTop - leftEyeBottom);
-
-    if (eyeDistance < EYE_DISTANCE_LIMIT) {
-      if (!eyeClosedStartTime) eyeClosedStartTime = Date.now();
-      const closedTime = (Date.now() - eyeClosedStartTime) / 1000;
-      statusText.innerText = `Eyes Closed: ${closedTime.toFixed(1)} sec`;
-      statusText.className = "warning";
-      if (closedTime >= EYE_CLOSE_THRESHOLD) triggerAlarm();
+    if (closedTime >= EYE_CLOSE_THRESHOLD) {
+      setDrowsy();
     } else {
-      resetSystem();
+      setClosing(closedTime);
     }
-  });
-
-  // CAMERA START
-  const camera = new Camera(video, { onFrame: async () => await faceMesh.send({ image: video }), width: 640, height: 480 });
-  camera.start();
-
-  // FUNCTIONS
-  async function triggerAlarm() {
-    if (!alarmActive) {
-      if (writer) {
-        await writer.write(new TextEncoder().encode("1\n")); // turn ON buzzer
-        console.log("Arduino → ON");
-      }
-      alarmActive = true;
-      statusText.innerText = "⚠️ DROWSINESS DETECTED!";
-      statusText.className = "warning";
-    }
+  } else {
+    setNormal();
   }
+});
 
-  async function resetSystem() {
-    eyeClosedStartTime = null;
-    if (alarmActive && writer) {
-      await writer.write(new TextEncoder().encode("0\n")); // turn OFF buzzer
-      console.log("Arduino → OFF");
-      alarmActive = false;
-    }
-    statusText.innerText = "Status: Normal";
+/* ------------------ CAMERA ------------------ */
+const camera = new Camera(video, {
+  onFrame: async () => await faceMesh.send({ image: video }),
+  width: 640,
+  height: 480
+});
+camera.start();
+
+/* ------------------ STATE FUNCTIONS ------------------ */
+function setNormal() {
+  eyeClosedStartTime = null;
+
+  if (currentState !== "normal") {
+    currentState = "normal";
+    statusText.textContent = "Status: Monitoring";
     statusText.className = "normal";
+    sendToArduino("0");
   }
+}
+
+function setClosing(time) {
+  if (currentState !== "closing") {
+    currentState = "closing";
+    statusText.className = "warning";
+  }
+  statusText.textContent = `Eyes Closing: ${time.toFixed(1)} sec`;
+}
+
+function setDrowsy() {
+  if (currentState !== "drowsy") {
+    currentState = "drowsy";
+    statusText.textContent = "⚠️ DROWSINESS DETECTED!";
+    statusText.className = "warning drowsy";
+    sendToArduino("1");
+  }
+}
+
+/* ------------------ SERIAL SAFE WRITE ------------------ */
+async function sendToArduino(value) {
+  if (!writer) return;
+  try {
+    await writer.write(new TextEncoder().encode(value + "\n"));
+  } catch {
+    console.log("Serial write skipped");
+  }
+}
 </script>
 
 </body>
